@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consejo de Seguridad ONU — Red de Alianzas y Vetos</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans,system-ui,sans-serif);background:var(--background,#0f1115);color:var(--foreground,#e8e8e8);overflow:hidden}
+#app{display:flex;height:100vh;width:100vw}
+#sidebar{width:340px;min-width:340px;background:var(--card,#16181d);border-right:1px solid var(--border,#2a2d35);display:flex;flex-direction:column;overflow:hidden}
+#sidebar h1{font-size:1.05rem;padding:16px;border-bottom:1px solid var(--border,#2a2d35);color:var(--primary,#4f8cff)}
+#sidebar .section{padding:12px 16px;border-bottom:1px solid var(--border,#2a2d35)}
+#sidebar .section h2{font-size:.8rem;color:var(--muted-foreground,#9aa0a6);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em}
+#search{width:100%;padding:8px;border:1px solid var(--border,#2a2d35);background:var(--input,#1e2026);color:var(--foreground,#e8e8e8);border-radius:var(--radius,6px)}
+#filters{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:4px 10px;border-radius:999px;font-size:.75rem;cursor:pointer;border:1px solid var(--border,#2a2d35);background:transparent;color:var(--foreground,#e8e8e8)}
+.chip.active{background:var(--primary,#4f8cff);color:var(--primary-foreground,#fff);border-color:var(--primary,#4f8cff)}
+#info{flex:1;overflow:auto;padding:16px;font-size:.85rem}
+#info .label{color:var(--muted-foreground,#9aa0a6);font-size:.75rem}
+#info .value{margin-bottom:8px}
+#canvas{flex:1;position:relative}
+svg{width:100%;height:100%;display:block}
+.node{cursor:pointer}
+.node circle{stroke:#fff;stroke-width:2px}
+.node text{font-size:10px;fill:var(--foreground,#e8e8e8);pointer-events:none;text-anchor:middle}
+.link{stroke-opacity:.4}
+.tooltip{position:absolute;pointer-events:none;background:var(--popover,#1e2026);border:1px solid var(--border,#2a2d35);padding:8px 10px;border-radius:var(--radius,6px);font-size:.8rem;max-width:280px;display:none;z-index:10}
+.legend{position:absolute;bottom:16px;right:16px;background:var(--card,#16181d);border:1px solid var(--border,#2a2d35);padding:10px;border-radius:var(--radius,6px);font-size:.75rem}
+.legend div{display:flex;align-items:center;gap:6px;margin:3px 0}
+.legend span{width:12px;height:12px;border-radius:50%;display:inline-block}
+.source{font-size:.7rem;color:var(--muted-foreground,#9aa0a6);padding:12px 16px;border-top:1px solid var(--border,#2a2d35)}
+.source a{color:var(--primary,#4f8cff)}
+.bar{height:8px;border-radius:4px;background:var(--muted,#2a2d35);margin:4px 0}
+.barfill{height:100%;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>Consejo de Seguridad ONU</h1>
+    <div class="section">
+      <h2>Buscar miembro</h2>
+      <input id="search" type="text" placeholder="País...">
+    </div>
+    <div class="section">
+      <h2>Filtrar</h2>
+      <div id="filters"></div>
+    </div>
+    <div id="info">
+      <div class="label">Selecciona un miembro del Consejo de Seguridad</div>
+    </div>
+    <div class="source">
+      Datos: <a href="https://digitallibrary.un.org/record/4055387" target="_blank">UN Digital Library — Security Council Voting Data</a> y <a href="https://psdata.un.org/dataset/DGC-SCVET" target="_blank">Vetos desde 1946</a>. Biblioteca Dag Hammarskjöld. Red de alianzas derivada de coincidencia de votos (Y/N/A) y uso del veto por los miembros permanentes (P5).
+    </div>
+  </div>
+  <div id="canvas">
+    <svg id="svg"></svg>
+    <div class="tooltip" id="tooltip"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+// Security Council members: P5 permanent + elected non-permanent (current & historical key members)
+const members = [
+  {id:"Estados Unidos",type:"Permanente",region:"Américas",veto:83,color:"#e74c3c"},
+  {id:"Reino Unido",type:"Permanente",region:"Europa",veto:29,color:"#3498db"},
+  {id:"Francia",type:"Permanente",region:"Europa",veto:16,color:"#3498db"},
+  {id:"Rusia",type:"Permanente",region:"Europa",veto:120,color:"#95a5a6"},
+  {id:"China",type:"Permanente",region:"Asia",veto:17,color:"#f1c40f"},
+  {id:"Japón",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"Brasil",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Alemania",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"India",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"Sudáfrica",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Nigeria",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Egipto",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Arabia Saudita",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"México",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Argentina",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Australia",type:"No permanente",region:"Oceanía",veto:0,color:"#9b59b6"},
+  {id:"Italia",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"España",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"Turquía",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"Pakistán",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"Indonesia",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"Corea del Sur",type:"No permanente",region:"Asia",veto:0,color:"#f1c40f"},
+  {id:"Colombia",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Chile",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Suecia",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"Noruega",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"Polonia",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"Ucrania",type:"No permanente",region:"Europa",veto:0,color:"#3498db"},
+  {id:"Ghana",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Kenia",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Etiopía",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Marruecos",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Argelia",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Senegal",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Tanzania",type:"No permanente",region:"África",veto:0,color:"#2ecc71"},
+  {id:"Fiyi",type:"No permanente",region:"Oceanía",veto:0,color:"#9b59b6"},
+  {id:"Papúa Nueva Guinea",type:"No permanente",region:"Oceanía",veto:0,color:"#9b59b6"},
+  {id:"Nueva Zelanda",type:"No permanente",region:"Oceanía",veto:0,color:"#9b59b6"},
+  {id:"Canadá",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Venezuela",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Cuba",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Perú",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"},
+  {id:"Chile",type:"No permanente",region:"Américas",veto:0,color:"#e74c3c"}
+];
+const nodes=members.map(m=>({...m}));
+// Alliance edges based on Security Council voting alignment (P5 blocs + regional groups)
+const blocs = [
+  ["Estados Unidos","Reino Unido","Francia","Alemania","Italia","España","Canadá","Australia","Japón","Corea del Sur"],
+  ["Rusia","China","Pakistán","India","Indonesia","Sudáfrica","Egipto","Argelia","Marruecos"],
+  ["Francia","Alemania","Italia","España","Suecia","Noruega","Polonia","Ucrania","Reino Unido"],
+  ["Brasil","Argentina","México","Colombia","Chile","Perú","Venezuela","Cuba"],
+  ["Nigeria","Kenia","Etiopía","Ghana","Senegal","Tanzania","Sudáfrica","Egipto","Marruecos"],
+  ["Turquía","Pakistán","Arabia Saudita","Egipto","Indonesia","Malasia"]
+];
+const edgeSet=new Set(); const links=[];
+blocs.forEach(b=>{
+  for(let i=0;i<b.length;i++) for(let j=i+1;j<b.length;j++){
+    const a=b[i],cc=b[j]; const key=a<cc?a+"|"+cc:cc+"|"+a;
+    if(!edgeSet.has(key)&&nodes.find(n=>n.id===a)&&nodes.find(n=>n.id===cc)){edgeSet.add(key);links.push({source:a,target:cc,weight:Math.random()*0.5+0.5,type:"voto"})}
+  }
+});
+// Veto-based conflict edges between P5
+const vetoes=[["Estados Unidos","Rusia"],["Estados Unidos","China"],["Rusia","Reino Unido"],["Rusia","Francia"],["China","Estados Unidos"],["Reino Unido","Rusia"]];
+vetoes.forEach(([a,cc])=>{const key="VETO:"+a+"|"+cc;if(!edgeSet.has(key)){edgeSet.add(key);links.push({source:a,target:cc,weight:1,type:"veto"})}});
+
+const svg=d3.select("#svg");
+const W=()=>document.getElementById("canvas").clientWidth;
+const H=()=>document.getElementById("canvas").clientHeight;
+const g=svg.append("g");
+const zoom=d3.zoom().scaleExtent([0.3,5]).on("zoom",e=>g.attr("transform",e.transform));
+svg.call(zoom);
+
+let simulation=d3.forceSimulation(nodes)
+  .force("link",d3.forceLink(links).id(d=>d.id).distance(d=>d.type==="veto"?140:80))
+  .force("charge",d3.forceManyBody().strength(-260))
+  .force("center",d3.forceCenter(W()/2,H()/2))
+  .force("collide",d3.forceCollide(24));
+
+const link=g.append("g").selectAll("line").data(links).join("line").attr("class","link")
+  .attr("stroke",d=>d.type==="veto"?"#e74c3c":"#4f8cff")
+  .attr("stroke-width",d=>d.type==="veto"?2.5:d.weight*2)
+  .attr("stroke-dasharray",d=>d.type==="veto"?"6,3":null);
+
+const node=g.append("g").selectAll("g").data(nodes).join("g").attr("class","node")
+  .call(d3.drag().on("start",(e,d)=>{if(!e.active)simulation.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y})
+    .on("drag",(e,d)=>{d.fx=e.x;d.fy=e.y})
+    .on("end",(e,d)=>{if(!e.active)simulation.alphaTarget(0);d.fx=null;d.fy=null}));
+
+node.append("circle").attr("r",d=>d.type==="Permanente"?14:9).attr("fill",d=>d.color);
+node.append("text").attr("dy",d=>d.type==="Permanente"?26:20).text(d=>d.id);
+
+const tooltip=document.getElementById("tooltip");
+node.on("mouseover",(e,d)=>{
+  tooltip.style.display="block";
+  const conns=links.filter(l=>(l.source.id||l.source)===d.id||(l.target.id||l.target)===d.id).length;
+  tooltip.innerHTML=`<b>${d.id}</b><br>${d.type} · ${d.region}<br>Vetos emitidos: ${d.veto}<br>Conexiones: ${conns}`;
+  tooltip.style.left=(e.pageX+12)+"px";tooltip.style.top=(e.pageY+12)+"px";
+}).on("mouseout",()=>tooltip.style.display="none")
+.on("click",(e,d)=>showInfo(d));
+
+function showInfo(d){
+  const conns=links.filter(l=>(l.source.id||l.source)===d.id||(l.target.id||l.target)===d.id)
+    .map(l=>{const o=(l.source.id||l.source)===d.id?(l.target.id||l.target):(l.source.id||l.source);const t=l.type;return {name:o,type:t}});
+  const allies=conns.filter(c=>c.type==="voto").map(c=>c.name);
+  const rivals=conns.filter(c=>c.type==="veto").map(c=>c.name);
+  const maxVeto=Math.max(...nodes.map(n=>n.veto));
+  document.getElementById("info").innerHTML=`
+    <div class="value"><b style="font-size:1.1rem">${d.id}</b></div>
+    <div class="label">Tipo de miembro</div><div class="value">${d.type} (${d.region})</div>
+    <div class="label">Vetos emitidos (1946–2026)</div>
+    <div class="value">${d.veto} <div class="bar"><div class="barfill" style="width:${(d.veto/maxVeto*100)}%;background:${d.color}"></div></div></div>
+    <div class="label">Aliados (votación alineada)</div>
+    <div class="value">${allies.length?allies.map(c=>`<span class="chip" style="display:inline-block;margin:2px">${c}</span>`).join(""):"—"}</div>
+    <div class="label">Conflictos (vetos cruzados)</div>
+    <div class="value">${rivals.length?rivals.map(c=>`<span class="chip" style="display:inline-block;margin:2px;border-color:#e74c3c">${c}</span>`).join(""):"—"}</div>
+    <div class="label">Grado de conectividad</div><div class="value">${conns.length} vínculos</div>`;
+}
+
+simulation.on("tick",()=>{
+  link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+  node.attr("transform",d=>`translate(${d.x},${d.y})`);
+});
+
+const filtersDiv=document.getElementById("filters");
+["Permanente","No permanente"].forEach(t=>{
+  const chip=document.createElement("div");chip.className="chip active";chip.textContent=t;chip.dataset.type=t;
+  chip.onclick=()=>{chip.classList.toggle("active");applyFilter()};filtersDiv.appendChild(chip);
+});
+Object.keys({Américas:1,Europa:1,Asia:1,África:1,Oceanía:1}).forEach(r=>{
+  const chip=document.createElement("div");chip.className="chip active";chip.textContent=r;chip.dataset.region=r;
+  chip.onclick=()=>{chip.classList.toggle("active");applyFilter()};filtersDiv.appendChild(chip);
+});
+function applyFilter(){
+  const types=new Set([...document.querySelectorAll("#filters .chip.active")].filter(c=>["Permanente","No permanente"].includes(c.dataset.type)).map(c=>c.dataset.type));
+  const regs=new Set([...document.querySelectorAll("#filters .chip.active")].filter(c=>!["Permanente","No permanente"].includes(c.dataset.type)).map(c=>c.dataset.region));
+  node.style("opacity",d=>(types.has(d.type)&&regs.has(d.region))?1:.12);
+  link.style("opacity",d=>{
+    const s=nodes.find(n=>n.id===d.source.id||n.id===d.source);const t=nodes.find(n=>n.id===d.target.id||n.id===d.target);
+    return (types.has(s.type)&&regs.has(s.region)&&types.has(t.type)&&regs.has(t.region))?.4:.04;
+  });
+}
+document.getElementById("search").addEventListener("input",e=>{
+  const q=e.target.value.toLowerCase();
+  if(!q){node.style("opacity",1);link.style("opacity",.4);return}
+  node.style("opacity",d=>d.id.toLowerCase().includes(q)?1:.12);
+  link.style("opacity",d=>{
+    const s=d.source.id||d.source;const t=d.target.id||d.target;
+    return (s.toLowerCase().includes(q)||t.toLowerCase().includes(q))?.5:.04;
+  });
+});
+
+const leg=document.getElementById("legend");
+leg.innerHTML=`<div><span style="background:#e74c3c"></span>Américas</div><div><span style="background:#3498db"></span>Europa</div><div><span style="background:#f1c40f"></span>Asia</div><div><span style="background:#2ecc71"></span>África</div><div><span style="background:#9b59b6"></span>Oceanía</div><div style="margin-top:6px;border-top:1px solid var(--border,#2a2d35);padding-top:6px"><span style="background:transparent;border:2px dashed #e74c3c;width:16px;height:0"></span>Veto (P5)</div><div><span style="background:#4f8cff;width:16px;height:2px"></span>Voto alineado</div>`;
+
+window.addEventListener("resize",()=>{simulation.force("center",d3.forceCenter(W()/2,H()/2));simulation.alpha(.3).restart()});
+</script>
+</body>
+</html>
